@@ -1,6 +1,7 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+const ai = new GoogleGenAI({ apiKey });
 
 export const SYSTEM_INSTRUCTION = `You are PyGuide AI, a friendly and patient Python tutor. 
 Your goal is to help anyone, including beginners and non-technical people (like someone's mother), understand Python.

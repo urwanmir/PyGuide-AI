@@ -3,7 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
+    <title>PyGuide AI</title>
+    <script>
+      // Polyfill process for browser environments to prevent white screen crashes on Vercel
+      if (typeof window !== 'undefined') {
+        window.process = window.process || {};
+        window.process.env = window.process.env || {};
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
