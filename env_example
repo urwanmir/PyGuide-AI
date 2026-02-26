@@ -1,0 +1,8 @@
+# PyGuide AI Environment Variables Example
+
+# The Gemini API Key is required for the AI features to work.
+# When deploying to Vercel, add this to your Project Settings > Environment Variables.
+GEMINI_API_KEY=your_api_key_here
+
+# The App URL is used for identifying the environment.
+APP_URL=https://your-app-name.vercel.app

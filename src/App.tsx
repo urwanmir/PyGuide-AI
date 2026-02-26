@@ -34,8 +34,18 @@ interface ChatSession {
 
 export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    const saved = localStorage.getItem('pyguide_sessions');
-    return saved ? JSON.parse(saved) : [{
+    try {
+      const saved = localStorage.getItem('pyguide_sessions');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load sessions from localStorage:", err);
+    }
+    return [{
       id: 'default',
       title: 'New Chat',
       messages: [],
@@ -90,6 +100,23 @@ export default function App() {
       role: m.role,
       parts: [{ text: m.text }]
     }));
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "") {
+      const aiMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        text: "⚠️ **API Key Missing**: It looks like the Gemini API key is not configured. Please add `GEMINI_API_KEY` to your environment variables to enable the AI tutor.",
+        timestamp: Date.now()
+      };
+      setSessions(prev => prev.map(s => 
+        s.id === currentSessionId 
+          ? { ...s, messages: [...updatedMessages, aiMessage], updatedAt: Date.now() } 
+          : s
+      ));
+      setIsLoading(false);
+      return;
+    }
 
     const responseText = await getChatResponse(text, history.slice(0, -1));
 
