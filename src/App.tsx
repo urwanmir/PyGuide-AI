@@ -23,7 +23,12 @@ import {
   Github,
   ExternalLink,
   ShieldCheck,
-  User
+  User,
+  Settings,
+  Search,
+  History,
+  Brain,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -42,6 +47,12 @@ interface ChatSession {
   title: string;
   messages: Message[];
   updatedAt: number;
+}
+
+interface Personalization {
+  nickname: string;
+  occupation: string;
+  aboutMe: string;
 }
 
 function LandingPage({ onAccept }: { onAccept: () => void }) {
@@ -196,10 +207,35 @@ function ChatInterface() {
       updatedAt: Date.now()
     }];
   });
+
+  const [personalization, setPersonalization] = useState<Personalization>(() => {
+    try {
+      const saved = localStorage.getItem('pyguide_personalization');
+      if (saved) return JSON.parse(saved);
+    } catch (err) {
+      console.error("Failed to load personalization:", err);
+    }
+    return { nickname: '', occupation: '', aboutMe: '' };
+  });
+
+  const [memories, setMemories] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('pyguide_memories');
+      if (saved) return JSON.parse(saved);
+    } catch (err) {
+      console.error("Failed to load memories:", err);
+    }
+    return [];
+  });
+
   const [currentSessionId, setCurrentSessionId] = useState(sessions[0].id);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'personalization' | 'memory'>('personalization');
+  const [newMemory, setNewMemory] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
@@ -207,6 +243,14 @@ function ChatInterface() {
   useEffect(() => {
     localStorage.setItem('pyguide_sessions', JSON.stringify(sessions));
   }, [sessions]);
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_personalization', JSON.stringify(personalization));
+  }, [personalization]);
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_memories', JSON.stringify(memories));
+  }, [memories]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -262,7 +306,7 @@ function ChatInterface() {
       return;
     }
 
-    const responseText = await getChatResponse(text, history.slice(0, -1));
+    const responseText = await getChatResponse(text, history.slice(0, -1), personalization, memories);
 
     const aiMessage: Message = {
       id: (Date.now() + 1).toString(),
@@ -346,6 +390,27 @@ function ChatInterface() {
     { icon: Code2, text: "Help me start learning Python as a beginner.", label: "Start" },
   ];
 
+  const addMemory = () => {
+    if (!newMemory.trim()) return;
+    setMemories(prev => [...prev, newMemory.trim()]);
+    setNewMemory('');
+  };
+
+  const deleteMemory = (index: number) => {
+    setMemories(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const clearAllMemories = () => {
+    if (confirm("Are you sure you want to delete all saved memories?")) {
+      setMemories([]);
+    }
+  };
+
+  const filteredSessions = sessions.filter(s => 
+    s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    s.messages.some(m => m.text.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
   return (
     <div className="flex h-screen bg-white overflow-hidden">
       {/* Sidebar */}
@@ -357,7 +422,7 @@ function ChatInterface() {
             exit={{ width: 0, opacity: 0 }}
             className="bg-[#f9f9f9] border-r border-black/5 flex flex-col h-full"
           >
-            <div className="p-3">
+            <div className="p-3 space-y-3">
               <button 
                 onClick={createNewChat}
                 className="w-full flex items-center gap-3 px-3 py-2.5 border border-black/10 rounded-lg text-sm hover:bg-black/5 transition-colors"
@@ -365,30 +430,54 @@ function ChatInterface() {
                 <Plus size={16} />
                 New Chat
               </button>
+
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 opacity-30" />
+                <input 
+                  type="text"
+                  placeholder="Search chats..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-black/5 rounded-lg py-2 pl-9 pr-3 text-xs focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20"
+                />
+              </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-3 space-y-1">
-              {sessions.map(session => (
-                <button
-                  key={session.id}
-                  onClick={() => setCurrentSessionId(session.id)}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors group relative",
-                    currentSessionId === session.id ? "bg-black/5" : "hover:bg-black/5"
-                  )}
-                >
-                  <MessageSquare size={16} className="shrink-0 opacity-60" />
-                  <span className="truncate pr-6">{session.title}</span>
-                  <Trash2 
-                    size={14} 
-                    className="absolute right-3 opacity-0 group-hover:opacity-40 hover:!opacity-100 transition-opacity"
-                    onClick={(e) => deleteSession(e, session.id)}
-                  />
-                </button>
-              ))}
+              {filteredSessions.length > 0 ? (
+                filteredSessions.map(session => (
+                  <button
+                    key={session.id}
+                    onClick={() => setCurrentSessionId(session.id)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors group relative",
+                      currentSessionId === session.id ? "bg-black/5" : "hover:bg-black/5"
+                    )}
+                  >
+                    <MessageSquare size={16} className="shrink-0 opacity-60" />
+                    <span className="truncate pr-6">{session.title}</span>
+                    <Trash2 
+                      size={14} 
+                      className="absolute right-3 opacity-0 group-hover:opacity-40 hover:!opacity-100 transition-opacity"
+                      onClick={(e) => deleteSession(e, session.id)}
+                    />
+                  </button>
+                ))
+              ) : (
+                <div className="text-center py-8 opacity-30 text-xs">
+                  No chats found
+                </div>
+              )}
             </div>
 
             <div className="p-3 border-t border-black/5 space-y-1">
+              <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm hover:bg-black/5 transition-colors"
+              >
+                <Settings size={16} className="opacity-60" />
+                Personalization
+              </button>
               <button 
                 onClick={exportData}
                 className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm hover:bg-black/5 transition-colors"
@@ -524,6 +613,175 @@ function ChatInterface() {
           </p>
         </div>
       </main>
+
+      {/* Personalization Modal */}
+      <AnimatePresence>
+        {isSettingsOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsSettingsOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-white rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            >
+              <div className="p-6 border-b border-black/5 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <Settings size={20} className="text-[#3776ab]" />
+                  <h2 className="text-xl font-bold">Settings</h2>
+                </div>
+                <button 
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="p-2 hover:bg-black/5 rounded-full transition-colors"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex border-b border-black/5 shrink-0">
+                <button 
+                  onClick={() => setSettingsTab('personalization')}
+                  className={cn(
+                    "flex-1 py-3 text-sm font-semibold transition-colors relative",
+                    settingsTab === 'personalization' ? "text-[#3776ab]" : "text-black/40 hover:text-black/60"
+                  )}
+                >
+                  Personalization
+                  {settingsTab === 'personalization' && (
+                    <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3776ab]" />
+                  )}
+                </button>
+                <button 
+                  onClick={() => setSettingsTab('memory')}
+                  className={cn(
+                    "flex-1 py-3 text-sm font-semibold transition-colors relative",
+                    settingsTab === 'memory' ? "text-[#3776ab]" : "text-black/40 hover:text-black/60"
+                  )}
+                >
+                  Memory
+                  {settingsTab === 'memory' && (
+                    <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3776ab]" />
+                  )}
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-6">
+                {settingsTab === 'personalization' ? (
+                  <div className="space-y-4">
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Nickname</label>
+                      <input 
+                        type="text"
+                        placeholder="What should PyGuide call you?"
+                        value={personalization.nickname}
+                        onChange={(e) => setPersonalization(prev => ({ ...prev, nickname: e.target.value }))}
+                        className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20"
+                      />
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Occupation</label>
+                      <input 
+                        type="text"
+                        placeholder="e.g. Student, Accountant, Hobbyist"
+                        value={personalization.occupation}
+                        onChange={(e) => setPersonalization(prev => ({ ...prev, occupation: e.target.value }))}
+                        className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20"
+                      />
+                    </div>
+                    
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-black/40 uppercase tracking-wider">More about you</label>
+                      <textarea 
+                        placeholder="Interests, goals, or preferences to keep in mind..."
+                        value={personalization.aboutMe}
+                        onChange={(e) => setPersonalization(prev => ({ ...prev, aboutMe: e.target.value }))}
+                        className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20 min-h-[100px] resize-none"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Saved Memories</label>
+                        {memories.length > 0 && (
+                          <button 
+                            onClick={clearAllMemories}
+                            className="text-[10px] text-red-500 hover:underline uppercase font-bold tracking-wider"
+                          >
+                            Delete all
+                          </button>
+                        )}
+                      </div>
+                      
+                      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                        {memories.length > 0 ? (
+                          memories.map((memory, i) => (
+                            <div key={i} className="group flex items-start gap-3 p-3 bg-black/5 rounded-xl relative">
+                              <div className="mt-1 shrink-0">
+                                <Sparkles size={14} className="text-[#3776ab]" />
+                              </div>
+                              <p className="text-sm pr-6 leading-relaxed">{memory}</p>
+                              <button 
+                                onClick={() => deleteMemory(i)}
+                                className="absolute right-2 top-2 p-1 opacity-0 group-hover:opacity-40 hover:!opacity-100 transition-opacity"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-center py-12 px-4 border-2 border-dashed border-black/5 rounded-2xl">
+                            <Brain size={32} className="mx-auto mb-3 opacity-10" />
+                            <p className="text-sm opacity-30">No saved memories yet. Tell PyGuide what to remember!</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2 pt-4 border-t border-black/5">
+                      <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Add New Memory</label>
+                      <div className="flex gap-2">
+                        <input 
+                          type="text"
+                          placeholder="e.g. My favorite color is blue"
+                          value={newMemory}
+                          onChange={(e) => setNewMemory(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && addMemory()}
+                          className="flex-1 bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20 text-sm"
+                        />
+                        <button 
+                          onClick={addMemory}
+                          disabled={!newMemory.trim()}
+                          className="px-4 bg-black text-white rounded-xl text-sm font-bold disabled:opacity-20 transition-opacity"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-6 border-t border-black/5 shrink-0">
+                <button 
+                  onClick={() => setIsSettingsOpen(false)}
+                  className="w-full py-3 bg-black text-white rounded-xl font-bold hover:bg-black/80 transition-all"
+                >
+                  Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
