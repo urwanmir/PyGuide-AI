@@ -1,5 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
 import { 
+  BrowserRouter, 
+  Routes, 
+  Route, 
+  Navigate, 
+  useNavigate,
+  Link
+} from 'react-router-dom';
+import { 
   Send, 
   Plus, 
   Download, 
@@ -11,7 +19,11 @@ import {
   HelpCircle,
   Zap,
   DollarSign,
-  Code2
+  Code2,
+  Github,
+  ExternalLink,
+  ShieldCheck,
+  User
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
@@ -32,7 +44,139 @@ interface ChatSession {
   updatedAt: number;
 }
 
-export default function App() {
+function LandingPage({ onAccept }: { onAccept: () => void }) {
+  const navigate = useNavigate();
+  const [accepted, setAccepted] = useState(false);
+
+  const handleAccept = () => {
+    localStorage.setItem('pyguide_privacy_accepted', 'true');
+    onAccept();
+    navigate('/');
+  };
+
+  return (
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 max-w-4xl mx-auto">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="text-center mb-12"
+      >
+        <div className="w-20 h-20 bg-[#3776ab]/10 rounded-3xl flex items-center justify-center mb-6 mx-auto">
+          <Code2 size={48} className="text-[#3776ab]" />
+        </div>
+        <h1 className="text-5xl font-bold mb-4 tracking-tight">Welcome to PyGuide AI</h1>
+        <p className="text-xl text-black/60 max-w-2xl mx-auto">
+          Your friendly, personal Python tutor. Designed to help you master Python with ease and analogies.
+        </p>
+      </motion.div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full mb-12">
+        <motion.div 
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.1 }}
+          className="p-8 border border-black/5 rounded-3xl bg-[#f9f9f9]"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <User className="text-[#3776ab]" size={24} />
+            <h2 className="text-2xl font-bold">The Developer</h2>
+          </div>
+          <p className="text-black/70 mb-6 leading-relaxed">
+            PyGuide AI is crafted by **Hadi (Urwan Mir)**. I'm passionate about making coding education accessible to everyone through AI.
+          </p>
+          <a 
+            href="https://urwanportfolio.netlify.app/" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-[#3776ab] font-semibold hover:underline"
+          >
+            View My Portfolio <ExternalLink size={16} />
+          </a>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.2 }}
+          className="p-8 border border-black/5 rounded-3xl bg-[#f9f9f9]"
+        >
+          <div className="flex items-center gap-3 mb-4">
+            <Github className="text-black" size={24} />
+            <h2 className="text-2xl font-bold">Open Source</h2>
+          </div>
+          <p className="text-black/70 mb-6 leading-relaxed">
+            This project is fully open source. We believe in transparency and community-driven development.
+          </p>
+          <a 
+            href="https://github.com/urwanmir/PyGuide-AI" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-black font-semibold hover:underline"
+          >
+            GitHub Repository <ExternalLink size={16} />
+          </a>
+        </motion.div>
+      </div>
+
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.3 }}
+        className="w-full p-8 border-2 border-[#3776ab]/20 rounded-3xl bg-[#3776ab]/5"
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <ShieldCheck className="text-[#3776ab]" size={24} />
+          <h2 className="text-2xl font-bold">Privacy Policy</h2>
+        </div>
+        <div className="text-sm text-black/70 space-y-4 mb-8 max-h-40 overflow-y-auto pr-4 custom-scrollbar">
+          <p>
+            PyGuide AI values your privacy. We use local storage to save your chat history directly on your device. We do not store your personal conversations on our servers.
+          </p>
+          <p>
+            By using this application, you agree to the following:
+          </p>
+          <ul className="list-disc pl-5 space-y-2">
+            <li>Your chat data is stored locally in your browser's cache.</li>
+            <li>We use the Gemini API to process your messages. Please do not share sensitive personal information.</li>
+            <li>We use cookies/local storage to remember your preferences and acceptance of this policy.</li>
+          </ul>
+        </div>
+        
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-3 cursor-pointer group">
+            <div className="relative w-6 h-6">
+              <input 
+                type="checkbox" 
+                checked={accepted}
+                onChange={(e) => setAccepted(e.target.checked)}
+                className="peer sr-only"
+              />
+              <div className="w-6 h-6 border-2 border-black/20 rounded-md peer-checked:bg-[#3776ab] peer-checked:border-[#3776ab] transition-all" />
+              <div className="absolute inset-0 flex items-center justify-center opacity-0 peer-checked:opacity-100 transition-opacity">
+                <ShieldCheck size={14} className="text-white" />
+              </div>
+            </div>
+            <span className="text-sm font-medium">I have read and accept the privacy policy</span>
+          </label>
+          
+          <button
+            disabled={!accepted}
+            onClick={handleAccept}
+            className="ml-auto px-8 py-3 bg-black text-white rounded-xl font-bold disabled:opacity-20 disabled:cursor-not-allowed hover:bg-black/80 transition-all"
+          >
+            Start Learning
+          </button>
+        </div>
+      </motion.div>
+
+      <footer className="mt-12 text-black/30 text-sm">
+        © {new Date().getFullYear()} PyGuide AI by Hadi (Urwan Mir)
+      </footer>
+    </div>
+  );
+}
+
+function ChatInterface() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
       const saved = localStorage.getItem('pyguide_sessions');
@@ -257,6 +401,13 @@ export default function App() {
                 Import Data
                 <input type="file" className="hidden" onChange={importData} accept=".json" />
               </label>
+              <Link 
+                to="/main"
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm hover:bg-black/5 transition-colors"
+              >
+                <HelpCircle size={16} className="opacity-60" />
+                About & Policy
+              </Link>
             </div>
           </motion.aside>
         )}
@@ -369,10 +520,48 @@ export default function App() {
             </button>
           </div>
           <p className="text-[10px] text-center mt-2 opacity-30">
-            PyGuide AI can make mistakes. Check important info.
+            PyGuide AI can make mistakes. Check important info. Created by Hadi (Urwan Mir).
           </p>
         </div>
       </main>
     </div>
+  );
+}
+
+function AppContent() {
+  const [isAccepted, setIsAccepted] = useState<boolean | null>(null);
+
+  const checkAcceptance = () => {
+    const accepted = localStorage.getItem('pyguide_privacy_accepted');
+    setIsAccepted(accepted === 'true');
+  };
+
+  useEffect(() => {
+    checkAcceptance();
+    
+    // Listen for storage changes (in case of multiple tabs, though not strictly needed here)
+    window.addEventListener('storage', checkAcceptance);
+    return () => window.removeEventListener('storage', checkAcceptance);
+  }, []);
+
+  if (isAccepted === null) return null;
+
+  return (
+    <Routes>
+      <Route path="/main" element={<LandingPage onAccept={checkAcceptance} />} />
+      <Route 
+        path="/" 
+        element={isAccepted ? <ChatInterface /> : <Navigate to="/main" replace />} 
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
+    </BrowserRouter>
   );
 }
