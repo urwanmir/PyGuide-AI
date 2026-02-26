@@ -93,8 +93,14 @@ export async function getChatResponse(
     });
 
     return response.text || "I'm sorry, I couldn't generate a response.";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Gemini API Error:", error);
+    
+    // Handle rate limit (429) errors gracefully
+    if (error?.message?.includes("429") || error?.status === 429 || error?.message?.includes("Quota exceeded")) {
+      return "⚠️ Rate limit exceeded for this model. Please try again in a moment or switch to a different model (like Fast Response).";
+    }
+    
     return "Error: " + (error instanceof Error ? error.message : "Unknown error");
   }
 }
