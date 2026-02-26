@@ -28,12 +28,32 @@ import {
   Search,
   History,
   Brain,
-  Sparkles
+  Sparkles,
+  Image as ImageIcon,
+  Video,
+  Mic,
+  Search as SearchIcon,
+  Bolt,
+  Network,
+  FileSearch,
+  Camera,
+  Languages,
+  ArrowRight,
+  Loader2,
+  Volume2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import Markdown from 'react-markdown';
-import { getChatResponse } from './services/gemini';
+import { 
+  getChatResponse, 
+  generateImage, 
+  editImage, 
+  generateSpeech, 
+  animateImage,
+  transcribeAudio
+} from './services/gemini';
 import { cn } from './lib/utils';
+import { LiveVoice } from './components/LiveVoice';
 
 interface Message {
   id: string;
@@ -233,10 +253,23 @@ function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isPowerMenuOpen, setIsPowerMenuOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'personalization' | 'memory'>('personalization');
   const [newMemory, setNewMemory] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Power Feature States
+  const [activePowerFeature, setActivePowerFeature] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{ data: string, mimeType: string } | null>(null);
+  const [imageSize, setImageSize] = useState<"1K" | "2K" | "4K">("1K");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isLiveOpen, setIsLiveOpen] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const currentSession = sessions.find(s => s.id === currentSessionId) || sessions[0];
 
@@ -306,7 +339,21 @@ function ChatInterface() {
       return;
     }
 
-    const responseText = await getChatResponse(text, history.slice(0, -1), personalization, memories);
+    const responseText = await getChatResponse(
+      text, 
+      history.slice(0, -1), 
+      personalization, 
+      memories,
+      {
+        model: activePowerFeature === 'thinking' ? 'gemini-3.1-pro-preview' : 
+               activePowerFeature === 'fast' ? 'gemini-2.5-flash-lite' : 
+               activePowerFeature === 'analyze' ? 'gemini-3.1-pro-preview' : 
+               undefined,
+        useSearch: activePowerFeature === 'search',
+        useThinking: activePowerFeature === 'thinking',
+        image: selectedImage || undefined
+      }
+    );
 
     const aiMessage: Message = {
       id: (Date.now() + 1).toString(),
@@ -405,6 +452,134 @@ function ChatInterface() {
       setMemories([]);
     }
   };
+
+  const handlePowerFeature = async (feature: string) => {
+    if (feature === 'live') {
+      setIsLiveOpen(true);
+      setIsPowerMenuOpen(false);
+      return;
+    }
+    setActivePowerFeature(feature === activePowerFeature ? null : feature);
+    setIsPowerMenuOpen(false);
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      setSelectedImage({ data: base64, mimeType: file.type });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSpecialAction = async () => {
+    if (!input.trim() && activePowerFeature !== 'transcribe') return;
+    
+    if (activePowerFeature === 'transcribe') {
+      if (isRecording) {
+        mediaRecorderRef.current?.stop();
+        setIsRecording(false);
+        return;
+      }
+      
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksRef.current.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.onloadend = async () => {
+            const base64 = (reader.result as string).split(',')[1];
+            setIsProcessing(true);
+            try {
+              const text = await transcribeAudio(base64, 'audio/webm');
+              setInput(text);
+              setActivePowerFeature(null);
+            } catch (err) {
+              console.error(err);
+              addMessageToChat('model', "⚠️ Transcription failed: " + (err instanceof Error ? err.message : "Unknown error"));
+            } finally {
+              setIsProcessing(false);
+            }
+          };
+          reader.readAsDataURL(audioBlob);
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (err) {
+        console.error(err);
+        addMessageToChat('model', "⚠️ Microphone access denied or error: " + (err instanceof Error ? err.message : "Unknown error"));
+      }
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      let resultUrl = '';
+      if (activePowerFeature === 'generate_image') {
+        resultUrl = await generateImage(input, imageSize);
+        addMessageToChat('model', `Here is your generated image:\n\n![Generated Image](${resultUrl})`);
+      } else if (activePowerFeature === 'edit_image' && selectedImage) {
+        resultUrl = await editImage(input, selectedImage.data, selectedImage.mimeType);
+        addMessageToChat('model', `Here is your edited image:\n\n![Edited Image](${resultUrl})`);
+      } else if (activePowerFeature === 'animate' && selectedImage) {
+        resultUrl = await animateImage(selectedImage.data, selectedImage.mimeType, input);
+        addMessageToChat('model', `Here is your animated video:\n\n<video controls src="${resultUrl}" className="w-full rounded-xl" />`);
+      } else if (activePowerFeature === 'tts') {
+        const base64Audio = await generateSpeech(input);
+        if (base64Audio) {
+          const audioUrl = `data:audio/mp3;base64,${base64Audio}`;
+          addMessageToChat('model', `Here is the audio for your text:\n\n<audio controls src="${audioUrl}" className="w-full" />`);
+        }
+      }
+      setInput('');
+      setSelectedImage(null);
+    } catch (err) {
+      console.error(err);
+      addMessageToChat('model', "⚠️ Error: " + (err instanceof Error ? err.message : "Action failed"));
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const addMessageToChat = (role: 'user' | 'model', text: string) => {
+    const newMessage: Message = {
+      id: Date.now().toString(),
+      role,
+      text,
+      timestamp: Date.now()
+    };
+    setSessions(prev => prev.map(s => 
+      s.id === currentSessionId 
+        ? { ...s, messages: [...s.messages, newMessage], updatedAt: Date.now() } 
+        : s
+    ));
+  };
+
+  const powerFeatures = [
+    { id: 'search', icon: SearchIcon, label: 'Search Grounding', description: 'Real-time Google Search' },
+    { id: 'thinking', icon: Network, label: 'Thinking Mode', description: 'Complex reasoning (Pro)' },
+    { id: 'fast', icon: Bolt, label: 'Fast Response', description: 'Low-latency (Flash-Lite)' },
+    { id: 'generate_image', icon: ImageIcon, label: 'Generate Image', description: 'Nano Banana Pro' },
+    { id: 'edit_image', icon: Camera, label: 'Edit Image', description: 'Nano Banana Edit' },
+    { id: 'analyze', icon: FileSearch, label: 'Analyze Image', description: 'Image understanding' },
+    { id: 'animate', icon: Video, label: 'Animate Image', description: 'Veo 3 Animation' },
+    { id: 'tts', icon: Volume2, label: 'Generate Speech', description: 'Text-to-Speech' },
+    { id: 'transcribe', icon: Mic, label: 'Transcribe Audio', description: 'Speech-to-Text' },
+    { id: 'live', icon: Zap, label: 'Live Voice', description: 'Conversational AI' },
+  ];
 
   const filteredSessions = sessions.filter(s => 
     s.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -586,33 +761,169 @@ function ChatInterface() {
 
         {/* Input Area */}
         <div className="p-4 bg-white border-t border-black/5">
-          <div className="max-w-3xl mx-auto relative">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              placeholder="Message PyGuide AI..."
-              className="w-full bg-[#f4f4f4] rounded-2xl py-3 pl-4 pr-12 resize-none focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20 min-h-[52px] max-h-40"
-              rows={1}
+          <div className="max-w-3xl mx-auto space-y-4">
+            {selectedImage && (
+              <div className="relative inline-block">
+                <img 
+                  src={`data:${selectedImage.mimeType};base64,${selectedImage.data}`} 
+                  className="h-20 w-20 object-cover rounded-xl border border-black/10" 
+                  alt="Selected"
+                />
+                <button 
+                  onClick={() => setSelectedImage(null)}
+                  className="absolute -top-2 -right-2 bg-black text-white rounded-full p-1 shadow-lg"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+
+            {activePowerFeature && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-[#3776ab]/10 text-[#3776ab] rounded-full text-xs font-semibold w-fit">
+                <Sparkles size={12} />
+                <span>{powerFeatures.find(f => f.id === activePowerFeature)?.label} Active</span>
+                <button onClick={() => setActivePowerFeature(null)} className="hover:text-black">
+                  <X size={12} />
+                </button>
+                {activePowerFeature === 'generate_image' && (
+                  <select 
+                    value={imageSize} 
+                    onChange={(e) => setImageSize(e.target.value as any)}
+                    className="bg-transparent border-none focus:ring-0 cursor-pointer ml-2"
+                  >
+                    <option value="1K">1K</option>
+                    <option value="2K">2K</option>
+                    <option value="4K">4K</option>
+                  </select>
+                )}
+                {(activePowerFeature === 'edit_image' || activePowerFeature === 'analyze' || activePowerFeature === 'animate') && !selectedImage && (
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="ml-2 flex items-center gap-1 hover:underline"
+                  >
+                    <Upload size={12} />
+                    Upload Image
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="relative flex items-end gap-2">
+              <div className="relative">
+                <button
+                  onClick={() => setIsPowerMenuOpen(!isPowerMenuOpen)}
+                  className={cn(
+                    "p-3 rounded-2xl transition-all",
+                    activePowerFeature ? "bg-[#3776ab] text-white" : "bg-[#f4f4f4] text-black/40 hover:text-black"
+                  )}
+                >
+                  <Sparkles size={20} />
+                </button>
+
+                <AnimatePresence>
+                  {isPowerMenuOpen && (
+                    <>
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setIsPowerMenuOpen(false)}
+                        className="fixed inset-0 z-20"
+                      />
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                        className="absolute bottom-full left-0 mb-2 w-64 bg-white rounded-2xl shadow-2xl border border-black/5 overflow-hidden z-30"
+                      >
+                        <div className="p-3 border-b border-black/5 bg-[#f9f9f9]">
+                          <h3 className="text-xs font-bold text-black/40 uppercase tracking-wider">AI Power Features</h3>
+                        </div>
+                        <div className="max-h-80 overflow-y-auto p-1">
+                          {powerFeatures.map((feature) => (
+                            <button
+                              key={feature.id}
+                              onClick={() => handlePowerFeature(feature.id)}
+                              className={cn(
+                                "w-full flex items-center gap-3 p-3 rounded-xl text-left transition-colors",
+                                activePowerFeature === feature.id ? "bg-[#3776ab]/10 text-[#3776ab]" : "hover:bg-black/5"
+                              )}
+                            >
+                              <feature.icon size={18} className={cn(activePowerFeature === feature.id ? "text-[#3776ab]" : "opacity-60")} />
+                              <div>
+                                <div className="text-sm font-semibold">{feature.label}</div>
+                                <div className="text-[10px] opacity-50">{feature.description}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="flex-1 relative">
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      if (['generate_image', 'edit_image', 'animate', 'tts'].includes(activePowerFeature || '')) {
+                        handleSpecialAction();
+                      } else {
+                        handleSend();
+                      }
+                    }
+                  }}
+                  placeholder={
+                    activePowerFeature === 'generate_image' ? "Describe the image to generate..." :
+                    activePowerFeature === 'edit_image' ? "Describe the edits to make..." :
+                    "Message PyGuide AI..."
+                  }
+                  className="w-full bg-[#f4f4f4] rounded-2xl py-3 pl-4 pr-12 resize-none focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20 min-h-[52px] max-h-40"
+                  rows={1}
+                />
+                <button
+                  onClick={() => {
+                    if (['generate_image', 'edit_image', 'animate', 'tts', 'transcribe'].includes(activePowerFeature || '')) {
+                      handleSpecialAction();
+                    } else {
+                      handleSend();
+                    }
+                  }}
+                  disabled={(activePowerFeature !== 'transcribe' && !input.trim()) || isLoading || isProcessing}
+                  className={cn(
+                    "absolute right-2 bottom-2 p-2 rounded-xl disabled:opacity-20 disabled:cursor-not-allowed transition-all",
+                    isRecording ? "bg-red-500 text-white animate-pulse" : "bg-black text-white"
+                  )}
+                >
+                  {isProcessing ? <Loader2 size={18} className="animate-spin" /> : 
+                   isRecording ? <Mic size={18} /> : <Send size={18} />}
+                </button>
+              </div>
+            </div>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              className="hidden" 
+              accept="image/*" 
+              onChange={handleImageUpload} 
             />
-            <button
-              onClick={() => handleSend()}
-              disabled={!input.trim() || isLoading}
-              className="absolute right-2 bottom-2 p-2 bg-black text-white rounded-xl disabled:opacity-20 disabled:cursor-not-allowed transition-opacity"
-            >
-              <Send size={18} />
-            </button>
           </div>
           <p className="text-[10px] text-center mt-2 opacity-30">
             PyGuide AI can make mistakes. Check important info. Created by Hadi (Urwan Mir).
           </p>
         </div>
       </main>
+
+      {/* Live Voice Modal */}
+      <AnimatePresence>
+        {isLiveOpen && (
+          <LiveVoice onClose={() => setIsLiveOpen(false)} />
+        )}
+      </AnimatePresence>
 
       {/* Personalization Modal */}
       <AnimatePresence>

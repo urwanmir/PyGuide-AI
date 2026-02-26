@@ -1,7 +1,18 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { 
+  GoogleGenAI, 
+  GenerateContentResponse, 
+  ThinkingLevel, 
+  Modality,
+  VideoGenerationReferenceType,
+  VideoGenerationReferenceImage
+} from "@google/genai";
 
 const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
-const ai = new GoogleGenAI({ apiKey });
+
+export function getAI() {
+  const key = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+  return new GoogleGenAI({ apiKey: key });
+}
 
 export const SYSTEM_INSTRUCTION = `You are PyGuide AI, a friendly and patient Python tutor created by Hadi (Urwan Mir). 
 Your goal is to help anyone, including beginners and non-technical people, understand Python.
@@ -19,9 +30,16 @@ export async function getChatResponse(
   message: string, 
   history: { role: "user" | "model"; parts: { text: string }[] }[],
   personalization?: { nickname?: string; occupation?: string; aboutMe?: string },
-  memories: string[] = []
+  memories: string[] = [],
+  options: { 
+    model?: string, 
+    useSearch?: boolean, 
+    useThinking?: boolean,
+    image?: { data: string, mimeType: string }
+  } = {}
 ) {
   try {
+    const ai = getAI();
     let systemPrompt = SYSTEM_INSTRUCTION;
     
     if (personalization) {
@@ -40,21 +58,173 @@ export async function getChatResponse(
       });
     }
 
+    const modelName = options.model || "gemini-3-flash-preview";
+    const parts: any[] = [{ text: message }];
+    
+    if (options.image) {
+      parts.unshift({
+        inlineData: {
+          data: options.image.data,
+          mimeType: options.image.mimeType
+        }
+      });
+    }
+
+    const config: any = {
+      systemInstruction: systemPrompt,
+      temperature: 0.7,
+    };
+
+    if (options.useSearch) {
+      config.tools = [{ googleSearch: {} }];
+    }
+
+    if (options.useThinking && modelName.includes("3.1-pro")) {
+      config.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
+    }
+
     const response: GenerateContentResponse = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: modelName,
       contents: [
         ...history,
-        { role: "user", parts: [{ text: message }] }
+        { role: "user", parts }
       ],
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.7,
-      },
+      config,
     });
 
     return response.text || "I'm sorry, I couldn't generate a response.";
   } catch (error) {
     console.error("Gemini API Error:", error);
-    return "Error: Unable to connect to the AI. Please check your API key.";
+    return "Error: " + (error instanceof Error ? error.message : "Unknown error");
   }
+}
+
+export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "1K") {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-pro-image-preview',
+    contents: [{ parts: [{ text: prompt }] }],
+    config: {
+      imageConfig: {
+        aspectRatio: "1:1",
+        imageSize: size
+      }
+    },
+  });
+
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      return `data:image/png;base64,${part.inlineData.data}`;
+    }
+  }
+  throw new Error("No image generated");
+}
+
+export async function editImage(imagePrompt: string, base64Image: string, mimeType: string) {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        { inlineData: { data: base64Image, mimeType } },
+        { text: imagePrompt },
+      ],
+    },
+  });
+
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      return `data:image/png;base64,${part.inlineData.data}`;
+    }
+  }
+  throw new Error("No edited image generated");
+}
+
+export async function generateSpeech(text: string) {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash-preview-tts",
+    contents: [{ parts: [{ text }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: 'Kore' },
+        },
+      },
+    },
+  });
+
+  return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+}
+
+export async function animateImage(base64Image: string, mimeType: string, prompt: string = "Animate this image") {
+  const ai = getAI();
+  let operation = await ai.models.generateVideos({
+    model: 'veo-3.1-fast-generate-preview',
+    prompt,
+    image: {
+      imageBytes: base64Image,
+      mimeType,
+    },
+    config: {
+      numberOfVideos: 1,
+      resolution: '720p',
+      aspectRatio: '16:9'
+    }
+  });
+
+  while (!operation.done) {
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    operation = await ai.operations.getVideosOperation({ operation: operation });
+  }
+
+  const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+  if (!downloadLink) throw new Error("Video generation failed");
+  
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+  const response = await fetch(downloadLink, {
+    method: 'GET',
+    headers: { 'x-goog-api-key': apiKey },
+  });
+  
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function transcribeAudio(base64Audio: string, mimeType: string) {
+  const ai = getAI();
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [
+      {
+        parts: [
+          { inlineData: { data: base64Audio, mimeType } },
+          { text: "Transcribe this audio accurately. Only return the transcription text." }
+        ]
+      }
+    ],
+  });
+
+  return response.text || "Could not transcribe audio.";
+}
+
+export function connectLive(callbacks: {
+  onopen?: () => void;
+  onmessage: (message: any) => void;
+  onerror?: (error: any) => void;
+  onclose?: () => void;
+}) {
+  const ai = getAI();
+  return ai.live.connect({
+    model: "gemini-2.5-flash-native-audio-preview-09-2025",
+    callbacks,
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } },
+      },
+      systemInstruction: "You are PyGuide AI in voice mode. Keep responses concise and helpful.",
+    },
+  });
 }
