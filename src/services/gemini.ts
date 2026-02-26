@@ -7,7 +7,17 @@ import {
   VideoGenerationReferenceImage
 } from "@google/genai";
 
-const getApiKeys = (userKey?: string) => {
+interface ApiSettings {
+  userKey?: string;
+  customKeys?: string[];
+  useCustomKeys?: boolean;
+}
+
+const getApiKeys = (settings?: ApiSettings) => {
+  if (settings?.useCustomKeys && settings.customKeys && settings.customKeys.some(k => k.trim())) {
+    return settings.customKeys.filter(k => k.trim());
+  }
+
   const keys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_API_KEY_2,
@@ -17,8 +27,8 @@ const getApiKeys = (userKey?: string) => {
     import.meta.env.VITE_GEMINI_API_KEY_3,
   ].filter(Boolean) as string[];
 
-  if (userKey) {
-    return [userKey, ...keys];
+  if (settings?.userKey) {
+    return [settings.userKey, ...keys];
   }
   return keys;
 };
@@ -26,11 +36,12 @@ const getApiKeys = (userKey?: string) => {
 let currentKeyIndex = 0;
 
 async function callWithRetry<T>(
-  fn: (ai: GoogleGenAI) => Promise<T>,
-  userKey?: string,
+  fn: (ai: GoogleGenAI, model?: string) => Promise<T>,
+  settings?: ApiSettings,
+  model?: string,
   attempt = 0
 ): Promise<T> {
-  const keys = getApiKeys(userKey);
+  const keys = getApiKeys(settings);
   if (keys.length === 0) {
     throw new Error("No Gemini API keys found. Please configure GEMINI_API_KEY.");
   }
@@ -42,14 +53,20 @@ async function callWithRetry<T>(
   const ai = new GoogleGenAI({ apiKey });
 
   try {
-    return await fn(ai);
+    return await fn(ai, model);
   } catch (error: any) {
     const isRateLimit = error?.message?.includes("429") || error?.status === 429 || error?.message?.includes("Quota exceeded");
     
-    if (isRateLimit && attempt < keys.length - 1) {
-      console.warn(`Rate limit hit for key ${currentKeyIndex}. Rotating to next key...`);
-      currentKeyIndex = (currentKeyIndex + 1) % keys.length;
-      return callWithRetry(fn, userKey, attempt + 1);
+    if (isRateLimit) {
+      if (attempt < keys.length - 1) {
+        console.warn(`Rate limit hit for key ${currentKeyIndex}. Rotating to next key...`);
+        currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+        return callWithRetry(fn, settings, model, attempt + 1);
+      } else if (model && model.startsWith('gemini-') && model !== 'gemma-3-27b') {
+        // All keys exhausted for Gemini model, failover to Gemma
+        console.warn(`All keys exhausted for ${model}. Failing over to gemma-3-27b...`);
+        return callWithRetry(fn, settings, 'gemma-3-27b', 0);
+      }
     }
     throw error;
   }
@@ -77,13 +94,26 @@ export async function getChatResponse(
     useSearch?: boolean, 
     useThinking?: boolean,
     image?: { data: string, mimeType: string },
-    userKey?: string
+    userKey?: string,
+    customKeys?: string[],
+    useCustomKeys?: boolean,
+    autoMemory?: string
   } = {}
 ) {
   try {
-    return await callWithRetry(async (ai) => {
+    const apiSettings: ApiSettings = {
+      userKey: options.userKey,
+      customKeys: options.customKeys,
+      useCustomKeys: options.useCustomKeys
+    };
+
+    return await callWithRetry(async (ai, currentModel) => {
       let systemPrompt = SYSTEM_INSTRUCTION;
       
+      if (options.autoMemory) {
+        systemPrompt += `\n\nAUTO-MEMORY (AI-observed context about the user):\n${options.autoMemory}`;
+      }
+
       if (personalization) {
         const { nickname, occupation, aboutMe } = personalization;
         let personalContext = "\n\nUSER PERSONALIZATION:";
@@ -100,7 +130,7 @@ export async function getChatResponse(
         });
       }
 
-      const modelName = options.model || "gemma-3-27b";
+      const modelName = currentModel || options.model || "gemma-3-27b";
       const parts: any[] = [{ text: message }];
       
       if (options.image) {
@@ -135,7 +165,7 @@ export async function getChatResponse(
       });
 
       return response.text || "I'm sorry, I couldn't generate a response.";
-    }, options.userKey);
+    }, apiSettings, options.model);
   } catch (error: any) {
     console.error("Gemini API Error:", error);
     
@@ -147,12 +177,14 @@ export async function getChatResponse(
   }
 }
 
-export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "1K", userKey?: string, model: string = 'gemini-3-pro-image-preview') {
-  return await callWithRetry(async (ai) => {
+export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "1K", userKey?: string, model: string = 'gemini-3-pro-image-preview', customKeys?: string[], useCustomKeys?: boolean) {
+  const apiSettings: ApiSettings = { userKey, customKeys, useCustomKeys };
+  return await callWithRetry(async (ai, currentModel) => {
+    const activeModel = currentModel || model;
     // If it's an Imagen model, we use generateImages, otherwise generateContent
-    if (model.startsWith('imagen')) {
+    if (activeModel.startsWith('imagen')) {
       const response = await ai.models.generateImages({
-        model: model,
+        model: activeModel,
         prompt: prompt,
         config: {
           numberOfImages: 1,
@@ -164,7 +196,7 @@ export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "
     }
 
     const response = await ai.models.generateContent({
-      model: model,
+      model: activeModel,
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         imageConfig: {
@@ -180,13 +212,16 @@ export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "
       }
     }
     throw new Error("No image generated");
-  }, userKey);
+  }, apiSettings, model);
 }
 
-export async function editImage(imagePrompt: string, base64Image: string, mimeType: string, userKey?: string) {
-  return await callWithRetry(async (ai) => {
+export async function editImage(imagePrompt: string, base64Image: string, mimeType: string, userKey?: string, customKeys?: string[], useCustomKeys?: boolean) {
+  const apiSettings: ApiSettings = { userKey, customKeys, useCustomKeys };
+  const model = 'gemini-2.5-flash-image';
+  return await callWithRetry(async (ai, currentModel) => {
+    const activeModel = currentModel || model;
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
+      model: activeModel,
       contents: {
         parts: [
           { inlineData: { data: base64Image, mimeType } },
@@ -201,13 +236,16 @@ export async function editImage(imagePrompt: string, base64Image: string, mimeTy
       }
     }
     throw new Error("No edited image generated");
-  }, userKey);
+  }, apiSettings, model);
 }
 
-export async function generateSpeech(text: string, userKey?: string) {
-  return await callWithRetry(async (ai) => {
+export async function generateSpeech(text: string, userKey?: string, customKeys?: string[], useCustomKeys?: boolean) {
+  const apiSettings: ApiSettings = { userKey, customKeys, useCustomKeys };
+  const model = "gemini-2.5-flash-preview-tts";
+  return await callWithRetry(async (ai, currentModel) => {
+    const activeModel = currentModel || model;
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
+      model: activeModel,
       contents: [{ parts: [{ text }] }],
       config: {
         responseModalities: [Modality.AUDIO],
@@ -220,13 +258,16 @@ export async function generateSpeech(text: string, userKey?: string) {
     });
 
     return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-  }, userKey);
+  }, apiSettings, model);
 }
 
-export async function animateImage(base64Image: string, mimeType: string, prompt: string = "Animate this image", userKey?: string) {
-  return await callWithRetry(async (ai) => {
+export async function animateImage(base64Image: string, mimeType: string, prompt: string = "Animate this image", userKey?: string, customKeys?: string[], useCustomKeys?: boolean) {
+  const apiSettings: ApiSettings = { userKey, customKeys, useCustomKeys };
+  const model = 'veo-3.1-fast-generate-preview';
+  return await callWithRetry(async (ai, currentModel) => {
+    const activeModel = currentModel || model;
     let operation = await ai.models.generateVideos({
-      model: 'veo-3.1-fast-generate-preview',
+      model: activeModel,
       prompt,
       image: {
         imageBytes: base64Image,
@@ -247,7 +288,7 @@ export async function animateImage(base64Image: string, mimeType: string, prompt
     const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
     if (!downloadLink) throw new Error("Video generation failed");
     
-    const keys = getApiKeys(userKey);
+    const keys = getApiKeys(apiSettings);
     const apiKey = keys[currentKeyIndex];
     
     const response = await fetch(downloadLink, {
@@ -257,13 +298,16 @@ export async function animateImage(base64Image: string, mimeType: string, prompt
     
     const blob = await response.blob();
     return URL.createObjectURL(blob);
-  }, userKey);
+  }, apiSettings, model);
 }
 
-export async function transcribeAudio(base64Audio: string, mimeType: string, userKey?: string) {
-  return await callWithRetry(async (ai) => {
+export async function transcribeAudio(base64Audio: string, mimeType: string, userKey?: string, customKeys?: string[], useCustomKeys?: boolean) {
+  const apiSettings: ApiSettings = { userKey, customKeys, useCustomKeys };
+  const model = "gemini-3-flash-preview";
+  return await callWithRetry(async (ai, currentModel) => {
+    const activeModel = currentModel || model;
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: activeModel,
       contents: [
         {
           parts: [
@@ -275,7 +319,38 @@ export async function transcribeAudio(base64Audio: string, mimeType: string, use
     });
 
     return response.text || "Could not transcribe audio.";
-  }, userKey);
+  }, apiSettings, model);
+}
+
+export async function generateAutoMemory(
+  history: { role: "user" | "model"; parts: { text: string }[] }[],
+  userKey?: string,
+  customKeys?: string[],
+  useCustomKeys?: boolean
+) {
+  const apiSettings: ApiSettings = { userKey, customKeys, useCustomKeys };
+  const model = "gemini-3-flash-preview";
+  
+  return await callWithRetry(async (ai, currentModel) => {
+    const activeModel = currentModel || model;
+    const response = await ai.models.generateContent({
+      model: activeModel,
+      contents: [
+        ...history,
+        { 
+          role: "user", 
+          parts: [{ 
+            text: "SILENT REVIEW: Based on our conversation so far, extract a concise summary of what you've learned about me. Include: my learning level, goals, confusion points, preferred language, and topics discussed. COMPRESS THIS INTO MAX 100 WORDS. This is for your internal memory to help me better in future chats." 
+          }] 
+        }
+      ],
+      config: {
+        temperature: 0.2,
+      },
+    });
+
+    return response.text || "";
+  }, apiSettings, model);
 }
 
 export function connectLive(callbacks: {
@@ -283,8 +358,9 @@ export function connectLive(callbacks: {
   onmessage: (message: any) => void;
   onerror?: (error: any) => void;
   onclose?: () => void;
-}, userKey?: string) {
-  const keys = getApiKeys(userKey);
+}, userKey?: string, customKeys?: string[], useCustomKeys?: boolean) {
+  const apiSettings: ApiSettings = { userKey, customKeys, useCustomKeys };
+  const keys = getApiKeys(apiSettings);
   const apiKey = keys[currentKeyIndex];
   const ai = new GoogleGenAI({ apiKey });
   

@@ -7,9 +7,11 @@ import { cn } from '../lib/utils';
 interface LiveVoiceProps {
   onClose: () => void;
   userApiKey?: string;
+  customKeys?: string[];
+  useCustomKeys?: boolean;
 }
 
-export const LiveVoice: React.FC<LiveVoiceProps> = ({ onClose, userApiKey }) => {
+export const LiveVoice: React.FC<LiveVoiceProps> = ({ onClose, userApiKey, customKeys, useCustomKeys }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(true);
   const [isMuted, setIsMuted] = useState(false);
@@ -48,7 +50,7 @@ export const LiveVoice: React.FC<LiveVoiceProps> = ({ onClose, userApiKey }) => 
             setIsConnected(false);
             onClose();
           }
-        }, userApiKey);
+        }, userApiKey, customKeys, useCustomKeys);
 
         sessionRef.current = await sessionPromise;
       } catch (err) {

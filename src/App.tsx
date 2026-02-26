@@ -69,7 +69,7 @@ interface ChatSession {
   updatedAt: number;
 }
 
-interface Personalization {
+interface UserSettings {
   nickname: string;
   occupation: string;
   aboutMe: string;
@@ -246,12 +246,12 @@ function ChatInterface() {
     }];
   });
 
-  const [personalization, setPersonalization] = useState<Personalization>(() => {
+  const [userSettings, setUserSettings] = useState<UserSettings>(() => {
     try {
       const saved = localStorage.getItem('pyguide_personalization');
       if (saved) return JSON.parse(saved);
     } catch (err) {
-      console.error("Failed to load personalization:", err);
+      console.error("Failed to load settings:", err);
     }
     return { nickname: '', occupation: '', aboutMe: '' };
   });
@@ -272,12 +272,23 @@ function ChatInterface() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPowerMenuOpen, setIsPowerMenuOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'personalization' | 'memory' | 'api'>('personalization');
+  const [settingsTab, setSettingsTab] = useState<'settings' | 'memory' | 'api' | 'auto_memory'>('settings');
   const [newMemory, setNewMemory] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   
+  // Auto-Memory State
+  const [autoMemory, setAutoMemory] = useState(() => localStorage.getItem('pyguide_auto_memory') || '');
+  const [hasNewAutoMemory, setHasNewAutoMemory] = useState(false);
+  const [nextAutoMemoryThreshold, setNextAutoMemoryThreshold] = useState(() => Math.floor(Math.random() * 11) + 5); // 5-15
+  const messageCountRef = useRef(0);
+  
   // API and Model Settings
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('pyguide_user_api_key') || '');
+  const [useCustomKeys, setUseCustomKeys] = useState(() => localStorage.getItem('pyguide_use_custom_keys') === 'true');
+  const [customKeys, setCustomKeys] = useState<string[]>(() => {
+    const saved = localStorage.getItem('pyguide_custom_keys');
+    return saved ? JSON.parse(saved) : ['', '', ''];
+  });
   const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('pyguide_selected_model') || 'gemma-3-27b');
   const [selectedImageModel, setSelectedImageModel] = useState<string>(() => localStorage.getItem('pyguide_selected_image_model') || 'gemini-3-pro-image-preview');
 
@@ -303,8 +314,8 @@ function ChatInterface() {
   }, [sessions]);
 
   useEffect(() => {
-    localStorage.setItem('pyguide_personalization', JSON.stringify(personalization));
-  }, [personalization]);
+    localStorage.setItem('pyguide_personalization', JSON.stringify(userSettings));
+  }, [userSettings]);
 
   useEffect(() => {
     localStorage.setItem('pyguide_memories', JSON.stringify(memories));
@@ -313,6 +324,14 @@ function ChatInterface() {
   useEffect(() => {
     localStorage.setItem('pyguide_user_api_key', userApiKey);
   }, [userApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_use_custom_keys', useCustomKeys.toString());
+  }, [useCustomKeys]);
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_custom_keys', JSON.stringify(customKeys));
+  }, [customKeys]);
 
   useEffect(() => {
     localStorage.setItem('pyguide_selected_model', selectedModel);
@@ -379,17 +398,19 @@ function ChatInterface() {
     const responseText = await getChatResponse(
       text, 
       history.slice(0, -1), 
-      personalization, 
+      userSettings, 
       memories,
       {
         model: activePowerFeature === 'thinking' ? 'gemini-3.1-pro-preview' : 
-               activePowerFeature === 'fast' ? 'gemini-2.5-flash-lite' : 
+               activePowerFeature === 'fast' ? 'gemini-3-flash-preview' : 
                activePowerFeature === 'analyze' ? 'gemini-3.1-pro-preview' : 
                selectedModel,
         useSearch: activePowerFeature === 'search',
         useThinking: activePowerFeature === 'thinking',
         image: selectedImage || undefined,
-        userKey: userApiKey || undefined
+        userKey: userApiKey || undefined,
+        customKeys,
+        useCustomKeys
       }
     );
 
@@ -559,13 +580,13 @@ function ChatInterface() {
     try {
       let resultUrl = '';
       if (activePowerFeature === 'generate_image') {
-        resultUrl = await generateImage(input, imageSize, userApiKey || undefined, selectedImageModel);
+        resultUrl = await generateImage(input, imageSize, userApiKey || undefined, selectedImageModel, customKeys, useCustomKeys);
         addMessageToChat('model', `Here is your generated image using **${selectedImageModel}**:\n\n![Generated Image](${resultUrl})`);
       } else if (activePowerFeature === 'edit_image' && selectedImage) {
-        resultUrl = await editImage(input, selectedImage.data, selectedImage.mimeType, userApiKey || undefined);
+        resultUrl = await editImage(input, selectedImage.data, selectedImage.mimeType, userApiKey || undefined, customKeys, useCustomKeys);
         addMessageToChat('model', `Here is your edited image:\n\n![Edited Image](${resultUrl})`);
       } else if (activePowerFeature === 'animate' && selectedImage) {
-        resultUrl = await animateImage(selectedImage.data, selectedImage.mimeType, input, userApiKey || undefined);
+        resultUrl = await animateImage(selectedImage.data, selectedImage.mimeType, input, userApiKey || undefined, customKeys, useCustomKeys);
         addMessageToChat('model', `Here is your animated video:\n\n<video controls src="${resultUrl}" className="w-full rounded-xl" />`);
       }
       setInput('');
@@ -606,7 +627,7 @@ function ChatInterface() {
           const base64 = (reader.result as string).split(',')[1];
           setIsProcessing(true);
           try {
-            const text = await transcribeAudio(base64, 'audio/webm', userApiKey || undefined);
+            const text = await transcribeAudio(base64, 'audio/webm', userApiKey || undefined, customKeys, useCustomKeys);
             setInput(prev => prev + (prev ? ' ' : '') + text);
           } catch (err) {
             console.error(err);
@@ -630,7 +651,7 @@ function ChatInterface() {
     if (isSpeaking === messageId) return;
     setIsSpeaking(messageId);
     try {
-      const base64Audio = await generateSpeech(text, userApiKey || undefined);
+      const base64Audio = await generateSpeech(text, userApiKey || undefined, customKeys, useCustomKeys);
       if (base64Audio) {
         const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
         audio.onended = () => setIsSpeaking(null);
@@ -971,15 +992,14 @@ function ChatInterface() {
                               className="text-[10px] font-bold bg-white border border-black/10 rounded px-1 py-0.5 focus:outline-none max-w-[120px]"
                             >
                               <optgroup label="Gemma 3">
-                                <option value="gemma-3-27b">Gemma 3 27B</option>
+                                <option value="gemma-3-27b">Gemini 3 27B</option>
                                 <option value="gemma-3-12b">Gemma 3 12B</option>
-                                <option value="gemma-3-4b">Gemma 3 4B</option>
-                                <option value="gemma-3-1b">Gemma 3 1B</option>
                               </optgroup>
                               <optgroup label="Gemini">
-                                <option value="gemini-3-flash-preview">3 Flash</option>
-                                <option value="gemini-3.1-pro-preview">3.1 Pro</option>
-                                <option value="gemini-2.5-flash-lite">2.5 Lite</option>
+                                <option value="gemini-3-flash-preview">Gemini 3 Flash</option>
+                                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro</option>
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5</option>
                               </optgroup>
                             </select>
                           </div>
@@ -1086,11 +1106,13 @@ function ChatInterface() {
           <LiveVoice 
             onClose={() => setIsLiveOpen(false)} 
             userApiKey={userApiKey || undefined}
+            customKeys={customKeys}
+            useCustomKeys={useCustomKeys}
           />
         )}
       </AnimatePresence>
 
-      {/* Personalization Modal */}
+      {/* Settings Modal */}
       <AnimatePresence>
         {isSettingsOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1122,14 +1144,14 @@ function ChatInterface() {
 
               <div className="flex border-b border-black/5 shrink-0">
                 <button 
-                  onClick={() => setSettingsTab('personalization')}
+                  onClick={() => setSettingsTab('settings')}
                   className={cn(
                     "flex-1 py-3 text-sm font-semibold transition-colors relative",
-                    settingsTab === 'personalization' ? "text-[#3776ab]" : "text-black/40 hover:text-black/60"
+                    settingsTab === 'settings' ? "text-[#3776ab]" : "text-black/40 hover:text-black/60"
                   )}
                 >
-                  Personalization
-                  {settingsTab === 'personalization' && (
+                  Settings
+                  {settingsTab === 'settings' && (
                     <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3776ab]" />
                   )}
                 </button>
@@ -1160,15 +1182,15 @@ function ChatInterface() {
               </div>
               
               <div className="flex-1 overflow-y-auto p-6">
-                {settingsTab === 'personalization' ? (
+                {settingsTab === 'settings' ? (
                   <div className="space-y-4">
                     <div className="space-y-1">
                       <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Nickname</label>
                       <input 
                         type="text"
                         placeholder="What should PyGuide call you?"
-                        value={personalization.nickname}
-                        onChange={(e) => setPersonalization(prev => ({ ...prev, nickname: e.target.value }))}
+                        value={userSettings.nickname}
+                        onChange={(e) => setUserSettings(prev => ({ ...prev, nickname: e.target.value }))}
                         className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20"
                       />
                     </div>
@@ -1178,8 +1200,8 @@ function ChatInterface() {
                       <input 
                         type="text"
                         placeholder="e.g. Student, Accountant, Hobbyist"
-                        value={personalization.occupation}
-                        onChange={(e) => setPersonalization(prev => ({ ...prev, occupation: e.target.value }))}
+                        value={userSettings.occupation}
+                        onChange={(e) => setUserSettings(prev => ({ ...prev, occupation: e.target.value }))}
                         className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20"
                       />
                     </div>
@@ -1188,8 +1210,8 @@ function ChatInterface() {
                       <label className="text-xs font-bold text-black/40 uppercase tracking-wider">More about you</label>
                       <textarea 
                         placeholder="Interests, goals, or preferences to keep in mind..."
-                        value={personalization.aboutMe}
-                        onChange={(e) => setPersonalization(prev => ({ ...prev, aboutMe: e.target.value }))}
+                        value={userSettings.aboutMe}
+                        onChange={(e) => setUserSettings(prev => ({ ...prev, aboutMe: e.target.value }))}
                         className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20 min-h-[100px] resize-none"
                       />
                     </div>
@@ -1256,25 +1278,75 @@ function ChatInterface() {
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     <div className="p-4 bg-[#3776ab]/5 rounded-2xl border border-[#3776ab]/10">
                       <p className="text-xs text-[#3776ab] font-medium leading-relaxed">
-                        If you hit rate limits, you can provide your own Gemini API key. This key will be stored locally in your browser and used as the primary key.
+                        Configure your Gemini API keys. You can use environment variables or provide up to 3 custom keys for automatic failover.
                       </p>
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Your Gemini API Key</label>
-                      <input 
-                        type="password"
-                        placeholder="Enter your API key here..."
-                        value={userApiKey}
-                        onChange={(e) => setUserApiKey(e.target.value)}
-                        className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20"
-                      />
+
+                    <div className="flex items-center justify-between p-4 bg-black/5 rounded-2xl">
+                      <div>
+                        <h4 className="text-sm font-bold">Use Custom API Keys</h4>
+                        <p className="text-[10px] opacity-40">Override environment variables with your own keys</p>
+                      </div>
+                      <button 
+                        onClick={() => setUseCustomKeys(!useCustomKeys)}
+                        className={cn(
+                          "w-12 h-6 rounded-full transition-all relative",
+                          useCustomKeys ? "bg-[#3776ab]" : "bg-black/20"
+                        )}
+                      >
+                        <div className={cn(
+                          "absolute top-1 w-4 h-4 rounded-full bg-white transition-all",
+                          useCustomKeys ? "right-1" : "left-1"
+                        )} />
+                      </button>
                     </div>
-                    <p className="text-[10px] opacity-40">
-                      Your key is never sent to our servers. It is only used to make requests directly to Google's Gemini API from your browser.
-                    </p>
+
+                    {useCustomKeys ? (
+                      <div className="space-y-4">
+                        <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Custom API Keys (Failover enabled)</label>
+                        {customKeys.map((key, index) => (
+                          <div key={index} className="space-y-1">
+                            <label className="text-[10px] font-bold opacity-30 uppercase">Key {index + 1}</label>
+                            <input 
+                              type="password"
+                              placeholder={`Enter API key ${index + 1}...`}
+                              value={key}
+                              onChange={(e) => {
+                                const newKeys = [...customKeys];
+                                newKeys[index] = e.target.value;
+                                setCustomKeys(newKeys);
+                              }}
+                              className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20 text-sm"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="space-y-1">
+                          <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Primary Gemini API Key</label>
+                          <input 
+                            type="password"
+                            placeholder="Enter your primary API key here..."
+                            value={userApiKey}
+                            onChange={(e) => setUserApiKey(e.target.value)}
+                            className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20 text-sm"
+                          />
+                        </div>
+                        <p className="text-[10px] opacity-40 italic">
+                          When custom keys are OFF, PyGuide uses environment variables with this primary key as the first priority.
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="p-4 bg-yellow-500/5 rounded-2xl border border-yellow-500/10">
+                      <p className="text-[10px] text-yellow-600 leading-relaxed">
+                        <strong>Security Note:</strong> Your keys are stored locally in your browser's <code>localStorage</code>. They are never sent to any server except directly to Google's API endpoints.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
