@@ -278,7 +278,8 @@ function ChatInterface() {
   
   // API and Model Settings
   const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('pyguide_user_api_key') || '');
-  const [selectedModel, setSelectedModel] = useState<'gemini-3-flash' | 'gemini-3.1-pro-preview' | 'gemini-2.5-flash-lite'>('gemini-3-flash');
+  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('pyguide_selected_model') || 'gemma-3-27b');
+  const [selectedImageModel, setSelectedImageModel] = useState<string>(() => localStorage.getItem('pyguide_selected_image_model') || 'gemini-3-pro-image-preview');
 
   // Power Feature States
   const [activePowerFeature, setActivePowerFeature] = useState<string | null>(null);
@@ -312,6 +313,14 @@ function ChatInterface() {
   useEffect(() => {
     localStorage.setItem('pyguide_user_api_key', userApiKey);
   }, [userApiKey]);
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_selected_model', selectedModel);
+  }, [selectedModel]);
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_selected_image_model', selectedImageModel);
+  }, [selectedImageModel]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -550,8 +559,8 @@ function ChatInterface() {
     try {
       let resultUrl = '';
       if (activePowerFeature === 'generate_image') {
-        resultUrl = await generateImage(input, imageSize, userApiKey || undefined);
-        addMessageToChat('model', `Here is your generated image:\n\n![Generated Image](${resultUrl})`);
+        resultUrl = await generateImage(input, imageSize, userApiKey || undefined, selectedImageModel);
+        addMessageToChat('model', `Here is your generated image using **${selectedImageModel}**:\n\n![Generated Image](${resultUrl})`);
       } else if (activePowerFeature === 'edit_image' && selectedImage) {
         resultUrl = await editImage(input, selectedImage.data, selectedImage.mimeType, userApiKey || undefined);
         addMessageToChat('model', `Here is your edited image:\n\n![Edited Image](${resultUrl})`);
@@ -953,17 +962,48 @@ function ChatInterface() {
                         exit={{ opacity: 0, scale: 0.9, y: 10 }}
                         className="absolute bottom-full left-0 mb-2 w-64 bg-white rounded-2xl shadow-2xl border border-black/5 overflow-hidden z-30"
                       >
-                        <div className="p-3 border-b border-black/5 bg-[#f9f9f9] flex items-center justify-between">
-                          <h3 className="text-xs font-bold text-black/40 uppercase tracking-wider">AI Power Features</h3>
-                          <select 
-                            value={selectedModel}
-                            onChange={(e) => setSelectedModel(e.target.value as any)}
-                            className="text-[10px] font-bold bg-white border border-black/10 rounded px-1 py-0.5 focus:outline-none"
-                          >
-                            <option value="gemini-3-flash">3 Flash</option>
-                            <option value="gemini-3.1-pro-preview">3.1 Pro</option>
-                            <option value="gemini-2.5-flash-lite">2.5 Lite</option>
-                          </select>
+                        <div className="p-3 border-b border-black/5 bg-[#f9f9f9] flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-xs font-bold text-black/40 uppercase tracking-wider">Text Model</h3>
+                            <select 
+                              value={selectedModel}
+                              onChange={(e) => setSelectedModel(e.target.value)}
+                              className="text-[10px] font-bold bg-white border border-black/10 rounded px-1 py-0.5 focus:outline-none max-w-[120px]"
+                            >
+                              <optgroup label="Gemma 3">
+                                <option value="gemma-3-27b">Gemma 3 27B</option>
+                                <option value="gemma-3-12b">Gemma 3 12B</option>
+                                <option value="gemma-3-4b">Gemma 3 4B</option>
+                                <option value="gemma-3-1b">Gemma 3 1B</option>
+                              </optgroup>
+                              <optgroup label="Gemini">
+                                <option value="gemini-3-flash-preview">3 Flash</option>
+                                <option value="gemini-3.1-pro-preview">3.1 Pro</option>
+                                <option value="gemini-2.5-flash-lite">2.5 Lite</option>
+                              </optgroup>
+                            </select>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-xs font-bold text-black/40 uppercase tracking-wider">Image Model</h3>
+                            <select 
+                              value={selectedImageModel}
+                              onChange={(e) => setSelectedImageModel(e.target.value)}
+                              className="text-[10px] font-bold bg-white border border-black/10 rounded px-1 py-0.5 focus:outline-none max-w-[120px]"
+                            >
+                              <optgroup label="Imagen">
+                                <option value="imagen-4-generate">Imagen 4</option>
+                                <option value="imagen-4-ultra-generate">Imagen 4 Ultra</option>
+                                <option value="imagen-4-fast-generate">Imagen 4 Fast</option>
+                              </optgroup>
+                              <optgroup label="Nano Banana">
+                                <option value="gemini-3-pro-image-preview">Nano Banana Pro</option>
+                                <option value="gemini-2.5-flash-image">Nano Banana</option>
+                              </optgroup>
+                            </select>
+                          </div>
+                          <p className="text-[9px] text-black/30 leading-tight">
+                            Gemma 3 models are lightweight, efficient open models from Google. 27B is the smartest for complex tasks.
+                          </p>
                         </div>
                         <div className="max-h-80 overflow-y-auto p-1">
                           {powerFeatures.map((feature) => (

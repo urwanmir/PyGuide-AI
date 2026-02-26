@@ -100,7 +100,7 @@ export async function getChatResponse(
         });
       }
 
-      const modelName = options.model || "gemini-3-flash";
+      const modelName = options.model || "gemma-3-27b";
       const parts: any[] = [{ text: message }];
       
       if (options.image) {
@@ -147,10 +147,24 @@ export async function getChatResponse(
   }
 }
 
-export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "1K", userKey?: string) {
+export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "1K", userKey?: string, model: string = 'gemini-3-pro-image-preview') {
   return await callWithRetry(async (ai) => {
+    // If it's an Imagen model, we use generateImages, otherwise generateContent
+    if (model.startsWith('imagen')) {
+      const response = await ai.models.generateImages({
+        model: model,
+        prompt: prompt,
+        config: {
+          numberOfImages: 1,
+          aspectRatio: '1:1',
+        },
+      });
+      const base64 = response.generatedImages[0].image.imageBytes;
+      return `data:image/png;base64,${base64}`;
+    }
+
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-image-preview',
+      model: model,
       contents: [{ parts: [{ text: prompt }] }],
       config: {
         imageConfig: {
@@ -249,7 +263,7 @@ export async function animateImage(base64Image: string, mimeType: string, prompt
 export async function transcribeAudio(base64Audio: string, mimeType: string, userKey?: string) {
   return await callWithRetry(async (ai) => {
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash",
+      model: "gemini-3-flash-preview",
       contents: [
         {
           parts: [
