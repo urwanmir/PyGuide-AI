@@ -272,10 +272,14 @@ function ChatInterface() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPowerMenuOpen, setIsPowerMenuOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'personalization' | 'memory'>('personalization');
+  const [settingsTab, setSettingsTab] = useState<'personalization' | 'memory' | 'api'>('personalization');
   const [newMemory, setNewMemory] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   
+  // API and Model Settings
+  const [userApiKey, setUserApiKey] = useState(() => localStorage.getItem('pyguide_user_api_key') || '');
+  const [selectedModel, setSelectedModel] = useState<'gemini-3-flash' | 'gemini-3.1-pro-preview' | 'gemini-2.5-flash-lite'>('gemini-3-flash');
+
   // Power Feature States
   const [activePowerFeature, setActivePowerFeature] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<{ data: string, mimeType: string } | null>(null);
@@ -304,6 +308,10 @@ function ChatInterface() {
   useEffect(() => {
     localStorage.setItem('pyguide_memories', JSON.stringify(memories));
   }, [memories]);
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_user_api_key', userApiKey);
+  }, [userApiKey]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -368,10 +376,11 @@ function ChatInterface() {
         model: activePowerFeature === 'thinking' ? 'gemini-3.1-pro-preview' : 
                activePowerFeature === 'fast' ? 'gemini-2.5-flash-lite' : 
                activePowerFeature === 'analyze' ? 'gemini-3.1-pro-preview' : 
-               undefined,
+               selectedModel,
         useSearch: activePowerFeature === 'search',
         useThinking: activePowerFeature === 'thinking',
-        image: selectedImage || undefined
+        image: selectedImage || undefined,
+        userKey: userApiKey || undefined
       }
     );
 
@@ -541,13 +550,13 @@ function ChatInterface() {
     try {
       let resultUrl = '';
       if (activePowerFeature === 'generate_image') {
-        resultUrl = await generateImage(input, imageSize);
+        resultUrl = await generateImage(input, imageSize, userApiKey || undefined);
         addMessageToChat('model', `Here is your generated image:\n\n![Generated Image](${resultUrl})`);
       } else if (activePowerFeature === 'edit_image' && selectedImage) {
-        resultUrl = await editImage(input, selectedImage.data, selectedImage.mimeType);
+        resultUrl = await editImage(input, selectedImage.data, selectedImage.mimeType, userApiKey || undefined);
         addMessageToChat('model', `Here is your edited image:\n\n![Edited Image](${resultUrl})`);
       } else if (activePowerFeature === 'animate' && selectedImage) {
-        resultUrl = await animateImage(selectedImage.data, selectedImage.mimeType, input);
+        resultUrl = await animateImage(selectedImage.data, selectedImage.mimeType, input, userApiKey || undefined);
         addMessageToChat('model', `Here is your animated video:\n\n<video controls src="${resultUrl}" className="w-full rounded-xl" />`);
       }
       setInput('');
@@ -588,7 +597,7 @@ function ChatInterface() {
           const base64 = (reader.result as string).split(',')[1];
           setIsProcessing(true);
           try {
-            const text = await transcribeAudio(base64, 'audio/webm');
+            const text = await transcribeAudio(base64, 'audio/webm', userApiKey || undefined);
             setInput(prev => prev + (prev ? ' ' : '') + text);
           } catch (err) {
             console.error(err);
@@ -612,7 +621,7 @@ function ChatInterface() {
     if (isSpeaking === messageId) return;
     setIsSpeaking(messageId);
     try {
-      const base64Audio = await generateSpeech(text);
+      const base64Audio = await generateSpeech(text, userApiKey || undefined);
       if (base64Audio) {
         const audio = new Audio(`data:audio/mp3;base64,${base64Audio}`);
         audio.onended = () => setIsSpeaking(null);
@@ -944,8 +953,17 @@ function ChatInterface() {
                         exit={{ opacity: 0, scale: 0.9, y: 10 }}
                         className="absolute bottom-full left-0 mb-2 w-64 bg-white rounded-2xl shadow-2xl border border-black/5 overflow-hidden z-30"
                       >
-                        <div className="p-3 border-b border-black/5 bg-[#f9f9f9]">
+                        <div className="p-3 border-b border-black/5 bg-[#f9f9f9] flex items-center justify-between">
                           <h3 className="text-xs font-bold text-black/40 uppercase tracking-wider">AI Power Features</h3>
+                          <select 
+                            value={selectedModel}
+                            onChange={(e) => setSelectedModel(e.target.value as any)}
+                            className="text-[10px] font-bold bg-white border border-black/10 rounded px-1 py-0.5 focus:outline-none"
+                          >
+                            <option value="gemini-3-flash">3 Flash</option>
+                            <option value="gemini-3.1-pro-preview">3.1 Pro</option>
+                            <option value="gemini-2.5-flash-lite">2.5 Lite</option>
+                          </select>
                         </div>
                         <div className="max-h-80 overflow-y-auto p-1">
                           {powerFeatures.map((feature) => (
@@ -1025,7 +1043,10 @@ function ChatInterface() {
       {/* Live Voice Modal */}
       <AnimatePresence>
         {isLiveOpen && (
-          <LiveVoice onClose={() => setIsLiveOpen(false)} />
+          <LiveVoice 
+            onClose={() => setIsLiveOpen(false)} 
+            userApiKey={userApiKey || undefined}
+          />
         )}
       </AnimatePresence>
 
@@ -1084,6 +1105,18 @@ function ChatInterface() {
                     <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3776ab]" />
                   )}
                 </button>
+                <button 
+                  onClick={() => setSettingsTab('api')}
+                  className={cn(
+                    "flex-1 py-3 text-sm font-semibold transition-colors relative",
+                    settingsTab === 'api' ? "text-[#3776ab]" : "text-black/40 hover:text-black/60"
+                  )}
+                >
+                  API Keys
+                  {settingsTab === 'api' && (
+                    <motion.div layoutId="tab-underline" className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3776ab]" />
+                  )}
+                </button>
               </div>
               
               <div className="flex-1 overflow-y-auto p-6">
@@ -1121,7 +1154,7 @@ function ChatInterface() {
                       />
                     </div>
                   </div>
-                ) : (
+                ) : settingsTab === 'memory' ? (
                   <div className="space-y-6">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -1181,6 +1214,27 @@ function ChatInterface() {
                         </button>
                       </div>
                     </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-[#3776ab]/5 rounded-2xl border border-[#3776ab]/10">
+                      <p className="text-xs text-[#3776ab] font-medium leading-relaxed">
+                        If you hit rate limits, you can provide your own Gemini API key. This key will be stored locally in your browser and used as the primary key.
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-bold text-black/40 uppercase tracking-wider">Your Gemini API Key</label>
+                      <input 
+                        type="password"
+                        placeholder="Enter your API key here..."
+                        value={userApiKey}
+                        onChange={(e) => setUserApiKey(e.target.value)}
+                        className="w-full bg-black/5 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#3776ab]/20"
+                      />
+                    </div>
+                    <p className="text-[10px] opacity-40">
+                      Your key is never sent to our servers. It is only used to make requests directly to Google's Gemini API from your browser.
+                    </p>
                   </div>
                 )}
               </div>

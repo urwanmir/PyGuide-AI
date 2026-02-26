@@ -7,11 +7,52 @@ import {
   VideoGenerationReferenceImage
 } from "@google/genai";
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+const getApiKeys = (userKey?: string) => {
+  const keys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+    import.meta.env.VITE_GEMINI_API_KEY,
+    import.meta.env.VITE_GEMINI_API_KEY_2,
+    import.meta.env.VITE_GEMINI_API_KEY_3,
+  ].filter(Boolean) as string[];
 
-export function getAI() {
-  const key = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
-  return new GoogleGenAI({ apiKey: key });
+  if (userKey) {
+    return [userKey, ...keys];
+  }
+  return keys;
+};
+
+let currentKeyIndex = 0;
+
+async function callWithRetry<T>(
+  fn: (ai: GoogleGenAI) => Promise<T>,
+  userKey?: string,
+  attempt = 0
+): Promise<T> {
+  const keys = getApiKeys(userKey);
+  if (keys.length === 0) {
+    throw new Error("No Gemini API keys found. Please configure GEMINI_API_KEY.");
+  }
+
+  // Ensure index is within bounds if keys changed
+  if (currentKeyIndex >= keys.length) currentKeyIndex = 0;
+  
+  const apiKey = keys[currentKeyIndex];
+  const ai = new GoogleGenAI({ apiKey });
+
+  try {
+    return await fn(ai);
+  } catch (error: any) {
+    const isRateLimit = error?.message?.includes("429") || error?.status === 429 || error?.message?.includes("Quota exceeded");
+    
+    if (isRateLimit && attempt < keys.length - 1) {
+      console.warn(`Rate limit hit for key ${currentKeyIndex}. Rotating to next key...`);
+      currentKeyIndex = (currentKeyIndex + 1) % keys.length;
+      return callWithRetry(fn, userKey, attempt + 1);
+    }
+    throw error;
+  }
 }
 
 export const SYSTEM_INSTRUCTION = `You are PyGuide AI, a friendly and patient Python tutor created by Hadi (Urwan Mir). 
@@ -35,184 +76,192 @@ export async function getChatResponse(
     model?: string, 
     useSearch?: boolean, 
     useThinking?: boolean,
-    image?: { data: string, mimeType: string }
+    image?: { data: string, mimeType: string },
+    userKey?: string
   } = {}
 ) {
   try {
-    const ai = getAI();
-    let systemPrompt = SYSTEM_INSTRUCTION;
-    
-    if (personalization) {
-      const { nickname, occupation, aboutMe } = personalization;
-      let personalContext = "\n\nUSER PERSONALIZATION:";
-      if (nickname) personalContext += `\n- User wants to be called: ${nickname}`;
-      if (occupation) personalContext += `\n- User's occupation/background: ${occupation}`;
-      if (aboutMe) personalContext += `\n- More about the user: ${aboutMe}`;
-      systemPrompt += personalContext;
-    }
+    return await callWithRetry(async (ai) => {
+      let systemPrompt = SYSTEM_INSTRUCTION;
+      
+      if (personalization) {
+        const { nickname, occupation, aboutMe } = personalization;
+        let personalContext = "\n\nUSER PERSONALIZATION:";
+        if (nickname) personalContext += `\n- User wants to be called: ${nickname}`;
+        if (occupation) personalContext += `\n- User's occupation/background: ${occupation}`;
+        if (aboutMe) personalContext += `\n- More about the user: ${aboutMe}`;
+        systemPrompt += personalContext;
+      }
 
-    if (memories.length > 0) {
-      systemPrompt += "\n\nSAVED MEMORIES (Facts to remember for the long term):";
-      memories.forEach((m, i) => {
-        systemPrompt += `\n${i + 1}. ${m}`;
+      if (memories.length > 0) {
+        systemPrompt += "\n\nSAVED MEMORIES (Facts to remember for the long term):";
+        memories.forEach((m, i) => {
+          systemPrompt += `\n${i + 1}. ${m}`;
+        });
+      }
+
+      const modelName = options.model || "gemini-3-flash";
+      const parts: any[] = [{ text: message }];
+      
+      if (options.image) {
+        parts.unshift({
+          inlineData: {
+            data: options.image.data,
+            mimeType: options.image.mimeType
+          }
+        });
+      }
+
+      const config: any = {
+        systemInstruction: systemPrompt,
+        temperature: 0.7,
+      };
+
+      if (options.useSearch) {
+        config.tools = [{ googleSearch: {} }];
+      }
+
+      if (options.useThinking && modelName.includes("3.1-pro")) {
+        config.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
+      }
+
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: modelName,
+        contents: [
+          ...history,
+          { role: "user", parts }
+        ],
+        config,
       });
-    }
 
-    const modelName = options.model || "gemini-3-flash-preview";
-    const parts: any[] = [{ text: message }];
-    
-    if (options.image) {
-      parts.unshift({
-        inlineData: {
-          data: options.image.data,
-          mimeType: options.image.mimeType
-        }
-      });
-    }
-
-    const config: any = {
-      systemInstruction: systemPrompt,
-      temperature: 0.7,
-    };
-
-    if (options.useSearch) {
-      config.tools = [{ googleSearch: {} }];
-    }
-
-    if (options.useThinking && modelName.includes("3.1-pro")) {
-      config.thinkingConfig = { thinkingLevel: ThinkingLevel.HIGH };
-    }
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: modelName,
-      contents: [
-        ...history,
-        { role: "user", parts }
-      ],
-      config,
-    });
-
-    return response.text || "I'm sorry, I couldn't generate a response.";
+      return response.text || "I'm sorry, I couldn't generate a response.";
+    }, options.userKey);
   } catch (error: any) {
     console.error("Gemini API Error:", error);
     
-    // Handle rate limit (429) errors gracefully
     if (error?.message?.includes("429") || error?.status === 429 || error?.message?.includes("Quota exceeded")) {
-      return "⚠️ Rate limit exceeded for this model. Please try again in a moment or switch to a different model (like Fast Response).";
+      return "⚠️ Rate limit exceeded for all available models and keys. Please try again in a moment or switch to a different model.";
     }
     
     return "Error: " + (error instanceof Error ? error.message : "Unknown error");
   }
 }
 
-export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "1K") {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-image-preview',
-    contents: [{ parts: [{ text: prompt }] }],
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1",
-        imageSize: size
+export async function generateImage(prompt: string, size: "1K" | "2K" | "4K" = "1K", userKey?: string) {
+  return await callWithRetry(async (ai) => {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-image-preview',
+      contents: [{ parts: [{ text: prompt }] }],
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1",
+          imageSize: size
+        }
+      },
+    });
+
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
       }
-    },
-  });
-
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
     }
-  }
-  throw new Error("No image generated");
+    throw new Error("No image generated");
+  }, userKey);
 }
 
-export async function editImage(imagePrompt: string, base64Image: string, mimeType: string) {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: [
-        { inlineData: { data: base64Image, mimeType } },
-        { text: imagePrompt },
-      ],
-    },
-  });
+export async function editImage(imagePrompt: string, base64Image: string, mimeType: string, userKey?: string) {
+  return await callWithRetry(async (ai) => {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          { inlineData: { data: base64Image, mimeType } },
+          { text: imagePrompt },
+        ],
+      },
+    });
 
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
-  }
-  throw new Error("No edited image generated");
+    throw new Error("No edited image generated");
+  }, userKey);
 }
 
-export async function generateSpeech(text: string) {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: 'Kore' },
+export async function generateSpeech(text: string, userKey?: string) {
+  return await callWithRetry(async (ai) => {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
         },
       },
-    },
-  });
+    });
 
-  return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  }, userKey);
 }
 
-export async function animateImage(base64Image: string, mimeType: string, prompt: string = "Animate this image") {
-  const ai = getAI();
-  let operation = await ai.models.generateVideos({
-    model: 'veo-3.1-fast-generate-preview',
-    prompt,
-    image: {
-      imageBytes: base64Image,
-      mimeType,
-    },
-    config: {
-      numberOfVideos: 1,
-      resolution: '720p',
-      aspectRatio: '16:9'
-    }
-  });
-
-  while (!operation.done) {
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    operation = await ai.operations.getVideosOperation({ operation: operation });
-  }
-
-  const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
-  if (!downloadLink) throw new Error("Video generation failed");
-  
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
-  const response = await fetch(downloadLink, {
-    method: 'GET',
-    headers: { 'x-goog-api-key': apiKey },
-  });
-  
-  const blob = await response.blob();
-  return URL.createObjectURL(blob);
-}
-
-export async function transcribeAudio(base64Audio: string, mimeType: string) {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [
-      {
-        parts: [
-          { inlineData: { data: base64Audio, mimeType } },
-          { text: "Transcribe this audio accurately. Only return the transcription text." }
-        ]
+export async function animateImage(base64Image: string, mimeType: string, prompt: string = "Animate this image", userKey?: string) {
+  return await callWithRetry(async (ai) => {
+    let operation = await ai.models.generateVideos({
+      model: 'veo-3.1-fast-generate-preview',
+      prompt,
+      image: {
+        imageBytes: base64Image,
+        mimeType,
+      },
+      config: {
+        numberOfVideos: 1,
+        resolution: '720p',
+        aspectRatio: '16:9'
       }
-    ],
-  });
+    });
 
-  return response.text || "Could not transcribe audio.";
+    while (!operation.done) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      operation = await ai.operations.getVideosOperation({ operation: operation });
+    }
+
+    const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+    if (!downloadLink) throw new Error("Video generation failed");
+    
+    const keys = getApiKeys(userKey);
+    const apiKey = keys[currentKeyIndex];
+    
+    const response = await fetch(downloadLink, {
+      method: 'GET',
+      headers: { 'x-goog-api-key': apiKey },
+    });
+    
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  }, userKey);
+}
+
+export async function transcribeAudio(base64Audio: string, mimeType: string, userKey?: string) {
+  return await callWithRetry(async (ai) => {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash",
+      contents: [
+        {
+          parts: [
+            { inlineData: { data: base64Audio, mimeType } },
+            { text: "Transcribe this audio accurately. Only return the transcription text." }
+          ]
+        }
+      ],
+    });
+
+    return response.text || "Could not transcribe audio.";
+  }, userKey);
 }
 
 export function connectLive(callbacks: {
@@ -220,8 +269,11 @@ export function connectLive(callbacks: {
   onmessage: (message: any) => void;
   onerror?: (error: any) => void;
   onclose?: () => void;
-}) {
-  const ai = getAI();
+}, userKey?: string) {
+  const keys = getApiKeys(userKey);
+  const apiKey = keys[currentKeyIndex];
+  const ai = new GoogleGenAI({ apiKey });
+  
   return ai.live.connect({
     model: "gemini-2.5-flash-native-audio-preview-09-2025",
     callbacks,
