@@ -101,7 +101,7 @@ export default function App() {
       parts: [{ text: m.text }]
     }));
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
     if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey === "") {
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
