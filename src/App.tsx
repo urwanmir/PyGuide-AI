@@ -289,7 +289,7 @@ function ChatInterface() {
     const saved = localStorage.getItem('pyguide_custom_keys');
     return saved ? JSON.parse(saved) : ['', '', ''];
   });
-  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('pyguide_selected_model') || 'gemma-3-27b');
+  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('pyguide_selected_model') || 'gemma-3-27b-it');
   const [selectedImageModel, setSelectedImageModel] = useState<string>(() => localStorage.getItem('pyguide_selected_image_model') || 'gemini-3-pro-image-preview');
 
   // Power Feature States
@@ -992,8 +992,9 @@ function ChatInterface() {
                               className="text-[10px] font-bold bg-white border border-black/10 rounded px-1 py-0.5 focus:outline-none max-w-[120px]"
                             >
                               <optgroup label="Gemma 3">
-                                <option value="gemma-3-27b">Gemini 3 27B</option>
-                                <option value="gemma-3-12b">Gemma 3 12B</option>
+                                <option value="gemma-3-27b-it">Gemma 3 27B</option>
+                                <option value="gemma-3-12b-it">Gemma 3 12B</option>
+                                <option value="gemma-3-4b-it">Gemma 3 4B</option>
                               </optgroup>
                               <optgroup label="Gemini">
                                 <option value="gemini-3-flash-preview">Gemini 3 Flash</option>

@@ -62,12 +62,17 @@ async function callWithRetry<T>(
         console.warn(`Rate limit hit for key ${currentKeyIndex}. Rotating to next key...`);
         currentKeyIndex = (currentKeyIndex + 1) % keys.length;
         return callWithRetry(fn, settings, model, attempt + 1);
-      } else if (model && model.startsWith('gemini-') && model !== 'gemma-3-27b') {
+      } else if (model && model.startsWith('gemini-') && model !== 'gemma-3-27b-it') {
         // All keys exhausted for Gemini model, failover to Gemma
-        console.warn(`All keys exhausted for ${model}. Failing over to gemma-3-27b...`);
-        return callWithRetry(fn, settings, 'gemma-3-27b', 0);
+        console.warn(`All keys exhausted for ${model}. Failing over to gemma-3-27b-it...`);
+        return callWithRetry(fn, settings, 'gemma-3-27b-it', 0);
       }
     }
+    
+    if (error?.status === 404 || error?.message?.includes("404")) {
+      console.error(`Model not found error: ${error.message}. This might be a version mismatch or incorrect model ID.`);
+    }
+    
     throw error;
   }
 }
@@ -130,7 +135,7 @@ export async function getChatResponse(
         });
       }
 
-      const modelName = currentModel || options.model || "gemma-3-27b";
+      const modelName = currentModel || options.model || "gemma-3-27b-it";
       const parts: any[] = [{ text: message }];
       
       if (options.image) {
