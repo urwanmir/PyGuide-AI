@@ -82,7 +82,10 @@ Your goal is to help anyone, including beginners and non-technical people, under
 Keep your explanations simple, use analogies, and avoid overwhelming the user with jargon.
 
 CRITICAL RULES:
-1. LANGUAGE: Default to English. However, if the user explicitly asks to speak in Urdu or Hindi, or if they start using those languages, you MUST switch to "Hinglish" (Roman Urdu/Hindi - using English letters to write Hindi/Urdu words).
+1. LANGUAGE: Default to English. However, if the user explicitly asks to speak in Urdu or Hindi, or if they start using those languages, or if the user's preferred language is set to Hindi, you MUST switch to "Hinglish" (Roman Urdu/Hindi).
+   - IMPORTANT: Use ONLY the English alphabet (Latin script).
+   - STRICTLY FORBIDDEN: Do NOT use Devanagari script (Hindi characters like 'नमस्ते') or Arabic/Urdu script.
+   - Example: Write "Namaste, kaise hain?" instead of "नमस्ते, कैसे हैं?".
 2. MONEY: DO NOT mention money, salaries, or earning potential unless the user explicitly asks about it.
 3. SALARY INFO: If asked about money, state they are ESTIMATES and require a combination of skills (AI, ML, Web Dev) and experience.
 4. REALITY: Emphasize Python's role in AI, ML, and training models.
@@ -102,7 +105,8 @@ export async function getChatResponse(
     userKey?: string,
     customKeys?: string[],
     useCustomKeys?: boolean,
-    autoMemory?: string
+    autoMemory?: string,
+    language?: 'en' | 'hi'
   } = {}
 ) {
   try {
@@ -114,6 +118,10 @@ export async function getChatResponse(
 
     return await callWithRetry(async (ai, currentModel) => {
       let systemPrompt = SYSTEM_INSTRUCTION;
+
+      if (options.language === 'hi') {
+        systemPrompt += "\n\nCURRENT USER PREFERENCE: The user has set their language to Hindi. You MUST respond in Hinglish (Roman Hindi) as per Rule 1.";
+      }
       
       if (options.autoMemory) {
         systemPrompt += `\n\nAUTO-MEMORY (AI-observed context about the user):\n${options.autoMemory}`;
