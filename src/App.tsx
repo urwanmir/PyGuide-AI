@@ -75,7 +75,7 @@ interface UserSettings {
   aboutMe: string;
 }
 
-function LandingPage({ onAccept }: { onAccept: () => void }) {
+function LandingPage({ onAccept, language, setLanguage }: { onAccept: () => void, language: 'en' | 'hi', setLanguage: (lang: 'en' | 'hi') => void }) {
   const navigate = useNavigate();
   const [accepted, setAccepted] = useState(false);
 
@@ -191,7 +191,19 @@ function LandingPage({ onAccept }: { onAccept: () => void }) {
           </ul>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2 bg-black/5 rounded-xl px-3 py-2 border border-black/5">
+            <Languages size={16} className="opacity-40" />
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as 'en' | 'hi')}
+              className="bg-transparent text-sm font-semibold focus:outline-none cursor-pointer"
+            >
+              <option value="en">English</option>
+              <option value="hi">Hindi (Hinglish)</option>
+            </select>
+          </div>
+
           <label className="flex items-center gap-3 cursor-pointer group">
             <div className="relative w-6 h-6">
               <input 
@@ -225,7 +237,7 @@ function LandingPage({ onAccept }: { onAccept: () => void }) {
   );
 }
 
-function ChatInterface() {
+function ChatInterface({ language, setLanguage }: { language: 'en' | 'hi', setLanguage: (lang: 'en' | 'hi') => void }) {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
       const saved = localStorage.getItem('pyguide_sessions');
@@ -410,7 +422,8 @@ function ChatInterface() {
         image: selectedImage || undefined,
         userKey: userApiKey || undefined,
         customKeys,
-        useCustomKeys
+        useCustomKeys,
+        language
       }
     );
 
@@ -799,6 +812,18 @@ function ChatInterface() {
           <div className="flex items-center gap-2 font-semibold text-lg">
             <Code2 className="text-[#3776ab]" size={24} />
             <span>PyGuide AI</span>
+          </div>
+
+          <div className="ml-auto flex items-center gap-2 bg-black/5 rounded-lg px-2 py-1.5 border border-black/5">
+            <Languages size={14} className="opacity-40" />
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value as 'en' | 'hi')}
+              className="bg-transparent text-[11px] font-bold uppercase tracking-wider focus:outline-none cursor-pointer"
+            >
+              <option value="en">EN</option>
+              <option value="hi">HI</option>
+            </select>
           </div>
         </header>
 
@@ -1368,13 +1393,29 @@ function ChatInterface() {
   );
 }
 
+function LanguageRedirect({ setLanguage }: { setLanguage: (lang: 'en' | 'hi') => void }) {
+  const navigate = useNavigate();
+  useEffect(() => {
+    setLanguage('hi');
+    navigate('/main', { replace: true });
+  }, [setLanguage, navigate]);
+  return null;
+}
+
 function AppContent() {
   const [isAccepted, setIsAccepted] = useState<boolean | null>(null);
+  const [language, setLanguage] = useState<'en' | 'hi'>(() => {
+    return (localStorage.getItem('pyguide_language') as 'en' | 'hi') || 'en';
+  });
 
   const checkAcceptance = () => {
     const accepted = localStorage.getItem('pyguide_privacy_accepted');
     setIsAccepted(accepted === 'true');
   };
+
+  useEffect(() => {
+    localStorage.setItem('pyguide_language', language);
+  }, [language]);
 
   useEffect(() => {
     checkAcceptance();
@@ -1388,10 +1429,11 @@ function AppContent() {
 
   return (
     <Routes>
-      <Route path="/main" element={<LandingPage onAccept={checkAcceptance} />} />
+      <Route path="/main" element={<LandingPage onAccept={checkAcceptance} language={language} setLanguage={setLanguage} />} />
+      <Route path="/hi" element={<LanguageRedirect setLanguage={setLanguage} />} />
       <Route 
         path="/" 
-        element={isAccepted ? <ChatInterface /> : <Navigate to="/main" replace />} 
+        element={isAccepted ? <ChatInterface language={language} setLanguage={setLanguage} /> : <Navigate to="/main" replace />}
       />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
