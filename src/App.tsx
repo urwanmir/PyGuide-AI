@@ -301,8 +301,33 @@ function ChatInterface({ language, setLanguage }: { language: 'en' | 'hi', setLa
     const saved = localStorage.getItem('pyguide_custom_keys');
     return saved ? JSON.parse(saved) : ['', '', ''];
   });
-  const [selectedModel, setSelectedModel] = useState<string>(() => localStorage.getItem('pyguide_selected_model') || 'gemma-3-27b-it');
-  const [selectedImageModel, setSelectedImageModel] = useState<string>(() => localStorage.getItem('pyguide_selected_image_model') || 'gemini-3-pro-image-preview');
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    const saved = localStorage.getItem('pyguide_selected_model') || 'gemma-3-27b-it';
+    // Validate and fix potentially legacy or malformed model names from localStorage
+    const validModels = [
+      'gemma-3-27b-it', 'gemma-3-12b-it', 'gemma-3-4b-it',
+      'gemini-3-flash-preview', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'
+    ];
+    if (saved === 'gemma-3-27b') return 'gemma-3-27b-it';
+    if (saved === 'gemma-3-12b') return 'gemma-3-12b-it';
+    if (saved === 'gemma-3-4b') return 'gemma-3-4b-it';
+
+    if (!validModels.includes(saved) && !saved.startsWith('gemini-')) {
+      return 'gemma-3-27b-it';
+    }
+    return saved;
+  });
+  const [selectedImageModel, setSelectedImageModel] = useState<string>(() => {
+    const saved = localStorage.getItem('pyguide_selected_image_model') || 'gemini-3-pro-image-preview';
+    const validImageModels = [
+      'imagen-4-generate', 'imagen-4-ultra-generate', 'imagen-4-fast-generate',
+      'gemini-3-pro-image-preview', 'gemini-2.5-flash-image'
+    ];
+    if (!validImageModels.includes(saved)) {
+      return 'gemini-3-pro-image-preview';
+    }
+    return saved;
+  });
 
   // Power Feature States
   const [activePowerFeature, setActivePowerFeature] = useState<string | null>(null);

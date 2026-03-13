@@ -116,6 +116,11 @@ export async function getChatResponse(
       useCustomKeys: options.useCustomKeys
     };
 
+    const validModels = [
+      'gemma-3-27b-it', 'gemma-3-12b-it', 'gemma-3-4b-it',
+      'gemini-3-flash-preview', 'gemini-3.1-pro-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'
+    ];
+
     return await callWithRetry(async (ai, currentModel) => {
       let systemPrompt = SYSTEM_INSTRUCTION;
 
@@ -143,7 +148,18 @@ export async function getChatResponse(
         });
       }
 
-      const modelName = currentModel || options.model || "gemma-3-27b-it";
+      let modelName = currentModel || options.model || "gemma-3-27b-it";
+
+      // Fix for legacy or incorrect model names in localStorage
+      if (modelName === 'gemma-3-27b') modelName = 'gemma-3-27b-it';
+      if (modelName === 'gemma-3-12b') modelName = 'gemma-3-12b-it';
+      if (modelName === 'gemma-3-4b') modelName = 'gemma-3-4b-it';
+
+      // Safety fallback if model is still invalid
+      if (!validModels.includes(modelName) && !modelName.startsWith('gemini-')) {
+        modelName = "gemma-3-27b-it";
+      }
+
       const parts: any[] = [{ text: message }];
       
       if (options.image) {
